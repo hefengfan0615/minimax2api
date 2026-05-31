@@ -3,6 +3,7 @@ Auto-login module for MiniMax Agent (agent.minimaxi.com).
 Handles username/password authentication and JWT token retrieval.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -14,17 +15,19 @@ logger = logging.getLogger("minimax2api.autologin")
 
 # ── Constants ────────────────────────────────────────────────────
 
-MINIMAX_LOGIN_BASE = "https://api.minimax.chat"
+ACCOUNT_BASE_URL = "https://account.minimaxi.com"
+AGENT_BASE_URL = "https://agent.minimaxi.com"
+
 FAKE_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Encoding": "gzip, deflate, br, zstd",
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Cache-Control": "no-cache",
-    "Origin": "https://agent.minimaxi.com",
+    "Origin": "https://account.minimaxi.com",
     "Pragma": "no-cache",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site",
+    "Sec-Fetch-Site": "same-origin",
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -37,144 +40,171 @@ class MiniMaxAutoLogin:
     """Auto-login handler for MiniMax Agent with username/password."""
 
     def __init__(self):
-        self.client = httpx.Client(timeout=30.0, follow_redirects=True)
+        self.client = httpx.Client(timeout=60.0, follow_redirects=True)
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.jwt_token: Optional[str] = None
         self.user_info: Optional[Dict] = None
         self.token_expiry: float = 0
+        self.cookies = {}
 
     def _set_common_headers(self):
         """Set common headers for requests."""
         self.client.headers.update(FAKE_HEADERS)
-        self.client.headers["Referer"] = "https://agent.minimaxi.com/"
 
-    async def login(self, username: str, password: str) -> Tuple[str, str]:
+    async def login_with_browser(self, username: str, password: str) -> Tuple[str, str]:
         """
-        Perform login with username (phone) and password.
-        
-        Returns (jwt_token, real_user_id).
+        Login using browser automation (more reliable for OAuth flows).
+        Falls back to manual mode if browser automation not available.
         """
         try:
-            self._set_common_headers()
+            # Try to use playwright if available
+            return await self._login_with_playwright(username, password)
+        except ImportError:
+            logger.warning("Playwright not available, trying simplified login...")
+            return await self._login_simplified(username, password)
+
+    async def _login_with_playwright(self, username: str, password: str) -> Tuple[str, str]:
+        """Login using Playwright browser automation."""
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
             
-            # Step 1: Try to get initial config (optional)
             try:
-                await self._get_initial_config()
-            except Exception as e:
-                logger.debug("Initial config not needed: %s", e)
-            
-            # Step 2: Login with phone/password
-            login_data = await self._password_login(username, password)
-            self.access_token = login_data.get("access_token", "")
-            self.refresh_token = login_data.get("refresh_token", "")
-            self.user_info = login_data.get("user_info", {})
-            
-            # Step 3: Get user profile and JWT token
-            profile = await self._get_user_profile()
-            self.jwt_token = profile.get("jwt_token", "")
-            real_user_id = str(profile.get("user_id", ""))
-            
-            if not self.jwt_token or not real_user_id:
-                raise RuntimeError("Failed to get JWT token or user ID from profile")
-            
-            logger.info("Successfully logged in: user_id=%s", real_user_id)
-            return self.jwt_token, real_user_id
-            
-        except Exception as e:
-            logger.error("Login failed: %s", e)
-            raise RuntimeError(f"Login failed: {str(e)}")
+                # Go to login page
+                logger.info("Navigating to login page...")
+                await page.goto(f"{AGENT_BASE_URL}/")
+                
+                # Click login button
+                await page.wait_for_selector("text=登录", timeout=10000)
+                await page.click("text=登录")
+                
+                # Wait for redirect to account page
+                await page.wait_for_url("**/unified-login**", timeout=10000)
+                
+                # Switch to password login
+                await page.wait_for_selector("text=密码登录", timeout=10000)
+                await page.click("text=密码登录")
+                
+                # Fill username
+                await page.wait_for_selector("input[placeholder*='手机号'], input[placeholder*='邮箱']", timeout=10000)
+                await page.fill("input[placeholder*='手机号'], input[placeholder*='邮箱']", username)
+                
+                # Fill password
+                await page.wait_for_selector("input[type='password']", timeout=10000)
+                await page.fill("input[type='password']", password)
+                
+                # Check agreement checkbox if present
+                try:
+                    await page.click("input[type='checkbox']", timeout=2000)
+                except:
+                    pass
+                
+                # Click login button
+                await page.click("text=立即登录")
+                
+                # Wait for redirect back to agent page
+                await page.wait_for_url(f"{AGENT_BASE_URL}/**", timeout=30000)
+                
+                # Extract JWT token from requests or local storage
+                logger.info("Extracting JWT token...")
+                
+                # Try to get token from local storage
+                jwt_token = None
+                try:
+                    local_storage = await page.evaluate("() => JSON.stringify(localStorage)")
+                    ls_data = json.loads(local_storage)
+                    for key, value in ls_data.items():
+                        if "token" in key.lower() or "jwt" in key.lower():
+                            if isinstance(value, str) and len(value) > 100:
+                                jwt_token = value
+                                break
+                except:
+                    pass
+                
+                # If not found, wait for a request that contains the token
+                if not jwt_token:
+                    async with page.expect_request("**/api/**", timeout=30000) as request_info:
+                        # Trigger some action that makes an API call
+                        await page.reload()
+                        request = await request_info.value
+                        
+                        # Check request URL and headers for token
+                        url = request.url
+                        if "token=" in url:
+                            from urllib.parse import parse_qs, urlparse
+                            parsed = urlparse(url)
+                            params = parse_qs(parsed.query)
+                            if "token" in params:
+                                jwt_token = params["token"][0]
+                
+                if not jwt_token:
+                    # Fallback: Try to get from cookies or page context
+                    cookies = await page.context.cookies()
+                    for cookie in cookies:
+                        if "token" in cookie["name"].lower():
+                            jwt_token = cookie["value"]
+                            break
+                
+                if not jwt_token:
+                    raise RuntimeError("Could not extract JWT token")
+                
+                # Parse user ID from token
+                user_id = self._parse_jwt_user_id(jwt_token)
+                
+                logger.info(f"Successfully logged in! User ID: {user_id}")
+                self.jwt_token = jwt_token
+                return jwt_token, user_id
+                
+            finally:
+                await browser.close()
 
-    async def _get_initial_config(self):
-        """Get initial config from agent page."""
-        resp = self.client.get("https://agent.minimaxi.com/", follow_redirects=True)
-        resp.raise_for_status()
+    async def _login_simplified(self, username: str, password: str) -> Tuple[str, str]:
+        """
+        Simplified login - requires manual token input for now,
+        but provides a helper to get started.
+        """
+        print("\n" + "="*60)
+        print("🚀 MiniMax Auto-Login")
+        print("="*60)
+        print("\nDue to the complex OAuth2 flow, please:")
+        print("\n1. Open https://agent.minimaxi.com in your browser")
+        print("2. Login with your credentials")
+        print("3. Open browser DevTools (F12)")
+        print("4. Go to Network tab")
+        print("5. Refresh the page and look for any API request")
+        print("6. In the request URL, find the 'token=' parameter")
+        print("7. Copy that JWT token and paste it below\n")
+        
+        jwt_token = input("Paste your JWT token here: ").strip()
+        
+        if not jwt_token:
+            raise RuntimeError("No token provided")
+        
+        user_id = self._parse_jwt_user_id(jwt_token)
+        self.jwt_token = jwt_token
+        
+        print(f"\n✅ Token received! User ID: {user_id}")
+        return jwt_token, user_id
 
-    async def _password_login(self, phone: str, password: str) -> Dict:
-        """Login via phone and password."""
-        url = f"{MINIMAX_LOGIN_BASE}/v1/auth/password_login"
-        
-        payload = {
-            "phone": phone,
-            "password": password,
-            "remember_me": True,
-        }
-        
-        headers = {
-            **FAKE_HEADERS,
-            "Content-Type": "application/json",
-        }
-        
-        resp = self.client.post(url, json=payload, headers=headers)
-        
-        if resp.status_code != 200:
-            raise RuntimeError(f"Password login failed: HTTP {resp.status_code} - {resp.text}")
-        
-        data = resp.json()
-        
-        if data.get("base_resp", {}).get("status_code") != 0:
-            raise RuntimeError(f"Login rejected: {data.get('base_resp', {}).get('status_msg', 'unknown')}")
-        
-        return data.get("data", {})
-
-    async def _get_user_profile(self) -> Dict:
-        """Get user profile with JWT token."""
-        url = f"{MINIMAX_LOGIN_BASE}/v1/user/profile"
-        
-        headers = {
-            **FAKE_HEADERS,
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        }
-        
-        resp = self.client.get(url, headers=headers)
-        
-        if resp.status_code != 200:
-            raise RuntimeError(f"Get profile failed: HTTP {resp.status_code} - {resp.text}")
-        
-        data = resp.json()
-        
-        if data.get("base_resp", {}).get("status_code") != 0:
-            raise RuntimeError(f"Get profile rejected: {data.get('base_resp', {}).get('status_msg', 'unknown')}")
-        
-        return data.get("data", {})
-
-    async def refresh_tokens(self) -> Tuple[str, str]:
-        """Refresh access token using refresh token."""
-        if not self.refresh_token:
-            raise RuntimeError("No refresh token available")
-        
-        url = f"{MINIMAX_LOGIN_BASE}/v1/auth/refresh_token"
-        
-        payload = {
-            "refresh_token": self.refresh_token,
-        }
-        
-        headers = {
-            **FAKE_HEADERS,
-            "Content-Type": "application/json",
-        }
-        
-        resp = self.client.post(url, json=payload, headers=headers)
-        
-        if resp.status_code != 200:
-            raise RuntimeError(f"Refresh token failed: HTTP {resp.status_code}")
-        
-        data = resp.json()
-        
-        if data.get("base_resp", {}).get("status_code") != 0:
-            raise RuntimeError(f"Refresh token rejected: {data.get('base_resp', {}).get('status_msg', 'unknown')}")
-        
-        new_data = data.get("data", {})
-        self.access_token = new_data.get("access_token", "")
-        self.refresh_token = new_data.get("refresh_token", "")
-        
-        # Re-get profile for new JWT
-        profile = await self._get_user_profile()
-        self.jwt_token = profile.get("jwt_token", "")
-        real_user_id = str(profile.get("user_id", ""))
-        
-        return self.jwt_token, real_user_id
+    def _parse_jwt_user_id(self, jwt_token: str) -> str:
+        """Extract user.id from a MiniMax JWT token payload."""
+        try:
+            parts = jwt_token.split(".")
+            if len(parts) != 3:
+                return ""
+            payload_b64 = parts[1]
+            padding = 4 - (len(payload_b64) % 4)
+            if padding != 4:
+                payload_b64 += "=" * padding
+            import base64
+            decoded = base64.b64decode(payload_b64).decode("utf-8")
+            payload = json.loads(decoded)
+            return payload.get("user", {}).get("id", "")
+        except Exception:
+            return ""
 
     def close(self):
         """Close the HTTP client."""
@@ -192,9 +222,27 @@ async def login_with_credentials(username: str, password: str) -> Tuple[str, str
     """
     login = MiniMaxAutoLogin()
     try:
-        return await login.login(username, password)
+        return await login.login_with_browser(username, password)
     finally:
         login.close()
+
+
+async def simple_chat_example(username: str, password: str, message: str = "你好"):
+    """Simple example: login and send one chat message."""
+    from minimax_adapter import web_agent_chat
+    
+    print(f"\n[1/3] Logging in...")
+    jwt_token, user_id = await login_with_credentials(username, password)
+    
+    print(f"[2/3] Sending message...")
+    messages = [{"role": "user", "content": message}]
+    response = await web_agent_chat("MiniMax-M2.7", messages, jwt_token, user_id)
+    
+    print(f"[3/3] Got response!\n")
+    print("🤖 AI:", response["choices"][0]["message"]["content"])
+    print()
+    
+    return response
 
 
 # ── Test ─────────────────────────────────────────────────────────
@@ -207,15 +255,16 @@ async def test_login():
     
     try:
         jwt_token, user_id = await login_with_credentials(phone, password)
-        print(f"\n✓ Login successful!")
-        print(f"  User ID: {user_id}")
-        print(f"  JWT Token: {jwt_token[:50]}...")
+        print(f"\n✅ Login successful!")
+        print(f"   User ID: {user_id}")
+        print(f"   JWT Token: {jwt_token[:50]}...")
         return True
     except Exception as e:
-        print(f"\n✗ Login failed: {e}")
+        print(f"\n❌ Login failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(test_login())
