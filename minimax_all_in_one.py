@@ -39,6 +39,8 @@ logger = logging.getLogger("minimax_all_in_one")
 
 # ==================== 常量 ====================
 AGENT_BASE_URL = "https://agent.minimaxi.com"
+MINIMAX_MAIN_URL = "https://www.minimaxi.com"
+MINIMAX_API_URL = "https://api.minimaxi.com"
 FAKE_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -370,6 +372,114 @@ class ConfigManager:
         with self._lock:
             self.config.accounts = [a.to_dict() for a in accounts]
             self._save()
+
+# ==================== MiniMax官网账号密码登录 ====================
+async def login_with_password(mobile: str, password: str) -> dict:
+    """
+    使用手机号和密码登录MiniMax官网获取JWT token
+    
+    Args:
+        mobile: 手机号
+        password: 密码
+        
+    Returns:
+        包含 token 和用户信息的字典
+    """
+    # 尝试多个可能的登录端点
+    possible_endpoints = [
+        "https://api.minimaxi.com/api/v1/auth/password/login",
+        "https://www.minimaxi.com/api/v1/auth/password/login",
+        "https://agent.minimaxi.com/api/v1/auth/password/login",
+        "https://api.minimax.com/api/v1/auth/password/login",
+    ]
+    
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        # 首先获取页面，可能需要获取一些必要的参数
+        await client.get(MINIMAX_MAIN_URL, headers=FAKE_HEADERS)
+        await client.get("https://agent.minimaxi.com", headers=FAKE_HEADERS)
+        
+        last_error = None
+        
+        # 尝试每个可能的登录端点
+        for login_url in possible_endpoints:
+            try:
+                logger.info(f"尝试登录端点: {login_url}")
+                
+                login_payload = {
+                    "mobile": mobile,
+                    "password": password
+                }
+                
+                # 确定Origin和Referer
+                origin = MINIMAX_MAIN_URL
+                if "agent.minimaxi.com" in login_url:
+                    origin = "https://agent.minimaxi.com"
+                
+                login_headers = {
+                    **FAKE_HEADERS,
+                    "Content-Type": "application/json",
+                    "Origin": origin,
+                    "Referer": f"{origin}/"
+                }
+                
+                resp = await client.post(
+                    login_url,
+                    json=login_payload,
+                    headers=login_headers,
+                    timeout=30.0
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(f"端点 {login_url} 响应: {json.dumps(data, ensure_ascii=False)[:200]}")
+                    
+                    # 检查响应状态
+                    status_ok = False
+                    if data.get("statusCode") == 0 or data.get("code") == 0:
+                        status_ok = True
+                    elif "success" in data and data.get("success"):
+                        status_ok = True
+                    elif "token" in str(data):
+                        status_ok = True
+                    
+                    if status_ok:
+                        # 解析登录响应，获取token
+                        result_data = data.get("data", data)
+                        token = result_data.get("token", "")
+                        
+                        if not token:
+                            # 尝试其他可能的字段名
+                            token = (result_data.get("jwt", "") or result_data.get("accessToken", "") or result_data.get("authToken", ""))
+                        
+                        if token:
+                            user_info = result_data.get("user", result_data)
+                            user_id = str(user_info.get("id", "") or user_info.get("userId", ""))
+                            
+                            if not user_id:
+                                # 尝试从token解析
+                                user_id = _parse_jwt_user_id(token)
+                            
+                            logger.info(f"登录成功: 手机号 {mobile}, 用户ID {user_id}")
+                            
+                            return {
+                                "success": True,
+                                "token": token,
+                                "user_id": user_id,
+                                "user_info": user_info,
+                                "raw_data": data
+                            }
+                else:
+                    logger.warning(f"登录端点 {login_url} 状态码: {resp.status_code}")
+                    last_error = f"HTTP {resp.status_code}"
+                    
+            except Exception as e:
+                logger.warning(f"登录端点 {login_url} 异常: {str(e)}")
+                last_error = str(e)
+        
+        # 所有端点都失败了
+        error_msg = last_error or "所有登录端点都失败"
+        logger.error(f"登录失败: {error_msg}")
+        raise RuntimeError(f"登录失败: {error_msg}")
 
 # ==================== MiniMax Web Agent 适配器 ====================
 _device_cache: dict = {}
@@ -1198,6 +1308,10 @@ async def list_models(
 class LoginRequest(BaseModel):
     password: str
 
+class MiniMaxLoginRequest(BaseModel):
+    mobile: str
+    password: str
+
 @app.post("/api/auth/login")
 async def webui_login(req: LoginRequest):
     if req.password == config_manager.config.webui_password:
@@ -1239,6 +1353,92 @@ async def api_models():
 @app.get("/api/usage")
 async def get_usage():
     return JSONResponse(usage_tracker.get_stats())
+
+@app.post("/api/minimax/login")
+async def minimax_auto_login(req: MiniMaxLoginRequest):
+    """
+    使用MiniMax账号密码自动登录并配置为web agent账号
+    """
+    try:
+        # 使用账号密码登录
+        login_result = await login_with_password(req.mobile, req.password)
+        
+        if not login_result.get("success"):
+            return JSONResponse({
+                "success": False,
+                "error": login_result.get("error", "登录失败")
+            }, status_code=401)
+        
+        # 获取token和用户ID
+        token = login_result.get("token", "")
+        user_id = login_result.get("user_id", "")
+        user_info = login_result.get("user_info", {})
+        
+        # 构建账号名称
+        account_name = user_info.get("name", "") or req.mobile
+        if not account_name:
+            account_name = token[:8] if len(token) >= 8 else "minimax-account"
+        
+        # 获取当前配置
+        current_config = config_manager.get_config()
+        existing_accounts = current_config.get("accounts", [])
+        
+        # 创建新账号配置
+        new_account = {
+            "api_key": token,
+            "name": account_name,
+            "base_url": "https://agent.minimaxi.com/v1",
+            "auth_mode": "token",
+            "auth_token": token,
+            "is_active": True,
+            "request_count": 0
+        }
+        
+        # 检查是否已存在相同账号（通过token前缀或手机号匹配）
+        updated_accounts = []
+        account_added = False
+        
+        for acc in existing_accounts:
+            # 如果已存在相同的token，更新它
+            if acc.get("auth_token", "").startswith(token[:20]) or acc.get("api_key", "").startswith(token[:20]):
+                updated_accounts.append(new_account)
+                account_added = True
+            else:
+                updated_accounts.append(acc)
+        
+        if not account_added:
+            updated_accounts.append(new_account)
+        
+        # 更新配置
+        new_config = {
+            "accounts": updated_accounts,
+            # 保持其他配置不变
+            "minimax_api_key": current_config.get("minimax_api_key", ""),
+            "minimax_base_url": current_config.get("minimax_base_url", ""),
+            "proxy_api_keys": current_config.get("proxy_api_keys", []),
+            "default_model": current_config.get("default_model", "MiniMax-M2.7"),
+            "available_models": current_config.get("available_models", DEFAULT_MODELS.copy()),
+            "webui_password": current_config.get("webui_password", "minimax")
+        }
+        
+        config_manager.update_config(new_config)
+        
+        logger.info(f"MiniMax账号 {account_name} 已自动配置成功")
+        
+        return JSONResponse({
+            "success": True,
+            "message": "账号登录并配置成功",
+            "account_name": account_name,
+            "user_id": user_id,
+            "user_info": user_info
+        })
+        
+    except Exception as e:
+        logger.error(f"MiniMax自动登录失败: {str(e)}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
 
 @app.get("/health")
 async def health():
