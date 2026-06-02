@@ -1,96 +1,48 @@
 """auto_login.py — 自动登录 agent.minimaxi.com 并把 JWT 写回 config.json。
 
-使用方法：
-    python auto_login.py                # 必要时登录并更新 config.json
-    python auto_login.py --check        # 只检查当前 token 是否过期
-    python auto_login.py --force        # 强制重新登录
-    python auto_login.py --phone 138... --password xxx  # 临时换号
+真相（curl 验证过）：
+1. 登录端点是 POST /v1/api/user/login/phone
+2. JS 里有两套 login：SMS 验证码（LOGINTYPEPHONE=""），和"密码"（LOGINTYPEPASSWORD="20"）
+3. 但服务端 **不实现** loginType=20，不管传什么字段都返回 1200019「服务端开小差了」
+4. loginType=""（SMS）走通逻辑但 baobao615 必被当作 SMS code，返回 1200009「验证码有误」
+
+也就是说，**纯密码登录走不通**。这是 MiniMax 服务端的真实行为，不是签名/字段问题。
+
+现实方案：
+  A) 让用户用手机/邮箱收短信验证码 → 脚本自动完成（需要先解 geetest/腾讯滑块 CAPTCHA）
+  B) 直接拿现有 JWT 续期 → /v1/api/user/renewal 端点存在但 POST 无 body 时返回 400
+  C) 用户在浏览器登录一次 → 脚本引导从 localStorage._token 导出，写回 config.json
+
+本脚本实现的是 **A + C 的合并版**：
+  - 默认先尝试 SMS 验证码登录（不接 captcha，需要人工输入）
+  - 失败时打印如何在浏览器导出 _token 的步骤
 
 依赖：pip install httpx
-说明：本脚本是基于已掌握信息（MiniMax-Free-API / Chat2API 通用模式）写的
-试探版。如果登录失败，脚本会打印最近一次的请求/响应细节，请在
-DevTools → Network 中输入账号密码登录，把真实端点/Headers/Payload 抓出来，
-对照日志里打印的内容进行修正（见文件末尾的“可调参数”区）。
 """
 
 from __future__ import annotations
 
-import argparse
 import base64
-import hashlib
 import json
 import logging
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
+from urllib.parse import quote
 
-try:
-    import httpx
-except ImportError:
-    print("缺少 httpx，请先运行: pip install httpx", file=sys.stderr)
-    sys.exit(1)
+import httpx
 
-
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║ 可调参数 — 如果登录失败，先改这里再跑                              ║
-# ╚══════════════════════════════════════════════════════════════════╝
-
-LOGIN_BASE = "https://agent.minimaxi.com"     # 网站主域
-PHONE = "19065353709"
-PASSWORD = "baobao615"
-COUNTRY_CODE = "86"
-
-# 候选登录端点（按顺序尝试，直到拿到 JWT 为止）
-LOGIN_ENDPOINTS = [
-    "/api/user/login",
-    "/api/auth/login",
-    "/v1/api/user/login",
-    "/matrix/api/v1/login",
-    "/api/v1/login",
-]
-
-# 候选请求体 — 同一个端点会依次试这些 body
-# 字段含 md5: 后缀的会自动用 md5(原值) 替换
-PASSWORD_VARIANTS = [
-    {"phone": PHONE, "country_code": COUNTRY_CODE, "password": PASSWORD},
-    {"phone": PHONE, "country_code": COUNTRY_CODE, "password_md5": "md5:" + PASSWORD},
-    {"phone": PHONE, "password": PASSWORD},
-    {"phone": PHONE, "password_md5": "md5:" + PASSWORD},
-]
-
-# 通用 Headers（User-Agent 模仿 Chrome on macOS，避免被基础反爬拦）
-COMMON_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/142.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh-CN,zh;q=0.9",
-    "Content-Type": "application/json",
-    "Origin": LOGIN_BASE,
-    "Referer": LOGIN_BASE + "/",
-}
-
-# Token 在响应 JSON 里可能的字段路径（按优先级）
-TOKEN_PATHS = [
-    ("data", "token"),
-    ("data", "access_token"),
-    ("data", "_token"),
-    ("data", "data", "token"),
-    ("token",),
-    ("access_token",),
-    ("_token",),
-]
-
-# 低于这个秒数视为“即将过期”，会触发重新登录
-EXPIRY_REFRESH_THRESHOLD = 6 * 3600  # 6 小时
-
-# ════════════════════════════════════════════════════════════════════
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
+from minimax_adapter import (
+    AGENT_BASE_URL,
+    FAKE_HEADERS,
+    FAKE_USER_DATA,
+    _md5,
+    _unix,
+    _unix_ms,
+    _uuid,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,19 +51,49 @@ logging.basicConfig(
 )
 log = logging.getLogger("auto_login")
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║ 配置                                                              ║
+# ╚══════════════════════════════════════════════════════════════════╝
 
-# ── 小工具 ─────────────────────────────────────────────────────────
+# 下面 phone/password 是用户原话写死的。脚本启动后会先用现有 JWT 反查
+# 真正的账号手机号并打印，用户可对照修正后再跑。
+PHONE = "19065353709"          # 用户口述的手机号
+COUNTRY_CODE = "+86"
+PASSWORD = "baobao615"         # 用户口述的密码（已确认服务端不接受 password login）
 
-def md5(s: str) -> str:
-    return hashlib.md5(s.encode("utf-8")).hexdigest()
+LOGIN_PATH = "/v1/api/user/login/phone"
+SMS_SEND_PATH = "/v1/api/user/login/sms/send"
+INFO_PATH = "/v1/api/user/info"
+CONFIG_PATH = Path(__file__).parent / "config.json"
+
+EXPIRY_REFRESH_THRESHOLD = 6 * 3600
 
 
-def decode_jwt_exp(token: str) -> Optional[int]:
-    """从 JWT 里读 exp 字段（秒），解析失败返回 None。"""
+# ── 通用签名 / 设备指纹 ─────────────────────────────────────────────
+
+def _build_qs(uid: str, did: str, jwt: str = "", real_uid: str = "0") -> str:
+    d = dict(FAKE_USER_DATA)
+    d["uuid"] = uid
+    d["device_id"] = did
+    d["unix"] = _unix_ms()
+    d["user_id"] = real_uid
+    if jwt:
+        d["token"] = jwt
+    return "&".join(f"{k}={v}" for k, v in d.items() if v is not None)
+
+
+def _compute_yy(full_uri: str, body: str) -> str:
+    encoded = quote(full_uri, safe="")
+    return _md5(f"{encoded}_{body}{_md5(_unix_ms())}ooui")
+
+
+def _compute_xsig(timestamp: int, jwt: str, body: str) -> str:
+    return _md5(f"{timestamp}{jwt}{body}")
+
+
+def _decode_jwt_exp(token: str) -> Optional[int]:
     try:
         parts = token.split(".")
-        if len(parts) != 3:
-            return None
         b64 = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.b64decode(b64).decode("utf-8"))
         return int(payload.get("exp")) if "exp" in payload else None
@@ -119,162 +101,139 @@ def decode_jwt_exp(token: str) -> Optional[int]:
         return None
 
 
-def looks_like_jwt(s: Any) -> bool:
-    return isinstance(s, str) and s.count(".") == 2 and len(s) > 50
-
-
-def extract_token_from_json(data: Any) -> Optional[str]:
-    """按 TOKEN_PATHS 取 token；取不到就递归扫整棵树。"""
-    if isinstance(data, dict):
-        for path in TOKEN_PATHS:
-            cur: Any = data
-            ok = True
-            for k in path:
-                if isinstance(cur, dict) and k in cur:
-                    cur = cur[k]
-                else:
-                    ok = False
-                    break
-            if ok and looks_like_jwt(cur):
-                return cur
-
-    def _scan(obj: Any) -> Optional[str]:
-        if looks_like_jwt(obj):
-            return obj
-        if isinstance(obj, dict):
-            for v in obj.values():
-                r = _scan(v)
-                if r:
-                    return r
-        elif isinstance(obj, list):
-            for v in obj:
-                r = _scan(v)
-                if r:
-                    return r
-        return None
-
-    return _scan(data)
-
-
-def extract_token_from_response(resp: httpx.Response) -> Optional[str]:
-    """先看 Set-Cookie，再看 JSON body。"""
-    for name, value in resp.cookies.items():
-        if "token" in name.lower() and looks_like_jwt(value):
-            log.info("从 Set-Cookie 提取到 token (cookie=%s)", name)
-            return value
+def _decode_jwt_payload(token: str) -> dict:
     try:
-        return extract_token_from_json(resp.json())
+        parts = token.split(".")
+        b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(base64.b64decode(b64).decode("utf-8"))
     except Exception:
-        return None
+        return {}
 
 
-# ── 读取 CSRF / 预热 Cookie ────────────────────────────────────────
+# ── 反查账号真实手机号（用现有 JWT） ─────────────────────────────────
 
-CSRF_PATTERNS = [
-    re.compile(r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']', re.I),
-    re.compile(r'name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']', re.I),
-    re.compile(r'name=["\']csrf_token["\']\s+value=["\']([^"\']+)["\']', re.I),
-    re.compile(r'window\.__CSRF__\s*=\s*["\']([^"\']+)["\']'),
-    re.compile(r'window\._csrf\s*=\s*["\']([^"\']+)["\']'),
-]
+def fetch_real_account(jwt: str) -> dict:
+    """用现有 token 调 /v1/api/user/info，拿到真实 phone/userID/name。"""
+    pl = _decode_jwt_payload(jwt)
+    real_uid = str(pl.get("user", {}).get("id", "0"))
 
+    qs = _build_qs(_uuid(), _uuid(), jwt, real_uid)
+    body = ""
+    uri = f"{INFO_PATH}?{qs}"
+    sig = _compute_xsig(_unix(), jwt, body)
+    yy = _compute_yy(uri, body)
 
-def warm_up(client: httpx.Client) -> str:
-    """访问首页，把基础 Cookie 收齐；顺便抓 csrf token。"""
-    log.info("[1/3] 预热：访问 %s/", LOGIN_BASE)
-    resp = client.get(LOGIN_BASE + "/", timeout=15.0)
-    resp.raise_for_status()
-    csrf = ""
-    for pat in CSRF_PATTERNS:
-        m = pat.search(resp.text)
-        if m:
-            csrf = m.group(1)
-            log.info("  抓到 csrf: %s...", csrf[:16])
-            break
-    if not csrf:
-        log.info("  页面里没找到 csrf 标记")
-    log.info("  已收集 cookie: %s", list(client.cookies.keys()))
-    return csrf
+    headers = {
+        **FAKE_HEADERS,
+        "Referer": "https://agent.minimaxi.com/",
+        "token": jwt,
+        "x-timestamp": str(_unix()),
+        "x-signature": sig,
+        "yy": yy,
+    }
+    r = httpx.get(AGENT_BASE_URL + uri, headers=headers, timeout=15.0)
+    return _safe_json(r)
 
 
-# ── 登录主流程 ──────────────────────────────────────────────────────
+def _safe_json(r: httpx.Response) -> dict:
+    """Decode response, handling brotli/gzip (httpx 不自动解 brotli)."""
+    content = r.content
+    enc = r.headers.get("content-encoding", "").lower()
+    if "br" in enc:
+        try:
+            import brotli
+            content = brotli.decompress(content)
+        except Exception:
+            pass
+    elif "gzip" in enc:
+        import gzip
+        content = gzip.decompress(content)
+    try:
+        return json.loads(content.decode("utf-8", errors="replace"))
+    except Exception:
+        return {}
 
-def _materialize(payload: dict) -> dict:
-    """处理 'md5:xxx' 标记 → 真实 md5 值。"""
-    out = {}
-    for k, v in payload.items():
-        if isinstance(v, str) and v.startswith("md5:"):
-            out[k] = md5(v[4:])
-        else:
-            out[k] = v
-    return out
+
+# ── 登录端点（已知服务端只接 PHONE/SMS） ──────────────────────────────
+
+def send_sms(phone: str) -> dict:
+    """POST /v1/api/user/login/sms/send。注意：正式登录页面要先解腾讯滑块 captcha。"""
+    body_dict = {"phone": phone, "countryCode": COUNTRY_CODE}
+    body_json = json.dumps(body_dict, separators=(",", ":"), ensure_ascii=False)
+    qs = _build_qs(_uuid(), _uuid())
+    uri = f"{SMS_SEND_PATH}?{qs}"
+    yy = _compute_yy(uri, body_json)
+    sig = _compute_xsig(_unix(), "", body_json)
+
+    headers = {
+        **FAKE_HEADERS,
+        "Content-Type": "application/json",
+        "Referer": "https://agent.minimaxi.com/login",
+        "x-timestamp": str(_unix()),
+        "x-signature": sig,
+        "yy": yy,
+    }
+    r = httpx.post(AGENT_BASE_URL + uri, content=body_json, headers=headers, timeout=15.0)
+    d = _safe_json(r)
+    info = d.get("statusInfo", {})
+    log.info("SMS 发送结果: HTTP %d code=%s msg=%s",
+             r.status_code, info.get("code"), info.get("message"))
+    if info.get("code") not in (0, None):
+        log.warning("SMS 没发出去。可能是要 captcha：先在浏览器里完成滑块，"
+                    "看 Network 抓包里 sms/send 请求带的 ticket / randStr "
+                    "再粘给我加进 headers")
+    return d
 
 
-def try_login(client: httpx.Client, csrf: str) -> Optional[str]:
-    log.info("[2/3] 开始探测登录端点，共 %d 个端点 × %d 种 body",
-             len(LOGIN_ENDPOINTS), len(PASSWORD_VARIANTS))
+def login_with_sms_code(phone: str, code: str) -> dict:
+    """POST /v1/api/user/login/phone，loginType=空（PHONE），code=短信验证码。"""
+    body_dict = {
+        "phone": phone,
+        "code": str(code),
+        "countryCode": COUNTRY_CODE,
+        "loginType": "",
+    }
+    body_json = json.dumps(body_dict, separators=(",", ":"), ensure_ascii=False)
+    qs = _build_qs(_uuid(), _uuid())
+    uri = f"{LOGIN_PATH}?{qs}"
+    yy = _compute_yy(uri, body_json)
+    sig = _compute_xsig(_unix(), "", body_json)
 
-    headers = dict(COMMON_HEADERS)
-    if csrf:
-        headers["x-csrf-token"] = csrf
-
-    for endpoint in LOGIN_ENDPOINTS:
-        url = LOGIN_BASE + endpoint
-        for body in PASSWORD_VARIANTS:
-            real_body = _materialize(body)
-            body_log = {k: (v[:8] + "...") if k.startswith("password") and isinstance(v, str) and len(v) > 12 else v
-                        for k, v in real_body.items()}
-            log.info("  → POST %s  body=%s", endpoint, body_log)
-            try:
-                resp = client.post(url, json=real_body, headers=headers, timeout=15.0)
-            except httpx.HTTPError as e:
-                log.warning("     网络异常: %s", e)
-                continue
-
-            log.info("     HTTP %d", resp.status_code)
-
-            # 302/3xx 通常会带 Set-Cookie 凭证
-            if 300 <= resp.status_code < 400:
-                token = extract_token_from_response(resp)
-                if token:
-                    log.info("  ✓ 拿到 token（重定向 + Set-Cookie）")
-                    return token
-
-            if resp.status_code != 200:
-                continue
-
-            token = extract_token_from_response(resp)
-            if token:
-                log.info("  ✓ 拿到 token")
-                return token
-
-            # 看看响应 JSON 是不是错误码
-            try:
-                data = resp.json()
-                code = data.get("code") or data.get("statusInfo", {}).get("code")
-                msg = (data.get("msg")
-                       or data.get("message")
-                       or data.get("statusInfo", {}).get("message")
-                       or "")
-                log.info("     业务码=%s msg=%s", code, msg)
-            except Exception:
-                log.info("     非 JSON 响应: %.150s", resp.text)
-
-    return None
+    headers = {
+        **FAKE_HEADERS,
+        "Content-Type": "application/json",
+        "Referer": "https://agent.minimaxi.com/login",
+        "x-timestamp": str(_unix()),
+        "x-signature": sig,
+        "yy": yy,
+    }
+    r = httpx.post(AGENT_BASE_URL + uri, content=body_json, headers=headers, timeout=15.0)
+    d = _safe_json(r)
+    info = d.get("statusInfo", {})
+    log.info("SMS 登录结果: HTTP %d code=%s msg=%s",
+             r.status_code, info.get("code"), info.get("message"))
+    return d
 
 
 # ── 写回 config.json ───────────────────────────────────────────────
 
-def save_token_to_config(jwt: str) -> None:
-    log.info("[3/3] 写回 %s", CONFIG_PATH.name)
+def get_current_token() -> Optional[str]:
     if not CONFIG_PATH.exists():
-        log.error("找不到 %s，请先初始化项目（python main.py 启动过一次）", CONFIG_PATH)
-        sys.exit(2)
+        return None
+    cfg = json.loads(CONFIG_PATH.read_text("utf-8"))
+    for a in cfg.get("accounts", []):
+        if a.get("auth_mode") == "token" and a.get("base_url", "").startswith("https://agent.minimaxi.com"):
+            return a.get("auth_token") or a.get("api_key")
+    return None
 
+
+def save_token(jwt: str) -> None:
+    if not CONFIG_PATH.exists():
+        log.error("找不到 %s，请先跑一次 python main.py 初始化", CONFIG_PATH)
+        sys.exit(2)
     cfg = json.loads(CONFIG_PATH.read_text("utf-8"))
     accounts = cfg.setdefault("accounts", [])
 
-    # 找一个匹配 phone 的 web-token 账号，否则用第一个，否则新建
     target = None
     for a in accounts:
         if a.get("auth_mode") == "token" and a.get("base_url", "").startswith("https://agent.minimaxi.com"):
@@ -296,110 +255,112 @@ def save_token_to_config(jwt: str) -> None:
     target["auth_token"] = jwt
     target["auth_mode"] = "token"
     target["base_url"] = "https://agent.minimaxi.com/v1"
-    target.setdefault("name", PHONE)
     target.setdefault("is_active", True)
-    target["request_count"] = 0  # 重置计数，激活账号
+    target["request_count"] = 0
 
-    cfg["accounts"] = accounts
     CONFIG_PATH.write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+        json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    log.info("  ✓ 已更新账号: name=%s, base_url=%s",
-             target.get("name"), target.get("base_url"))
-
-
-# ── 检查现有 token ─────────────────────────────────────────────────
-
-def get_current_token() -> Optional[str]:
-    if not CONFIG_PATH.exists():
-        return None
-    cfg = json.loads(CONFIG_PATH.read_text("utf-8"))
-    for a in cfg.get("accounts", []):
-        if a.get("auth_mode") == "token" and a.get("base_url", "").startswith("https://agent.minimaxi.com"):
-            return a.get("auth_token") or a.get("api_key")
-    return None
-
-
-def describe_token(token: Optional[str]) -> str:
-    if not token:
-        return "(无)"
-    exp = decode_jwt_exp(token)
-    if not exp:
-        return f"{token[:24]}... (无法解析 exp)"
-    remain = exp - int(time.time())
-    if remain <= 0:
-        return f"已过期 {-remain}s 前"
-    return (f"{token[:24]}...  剩余 {remain // 3600}h{(remain % 3600) // 60}m  "
-            f"(exp={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))})")
+    log.info("✓ 已写回 %s", CONFIG_PATH.name)
 
 
 # ── 入口 ───────────────────────────────────────────────────────────
 
 def main() -> int:
-    global PHONE, PASSWORD  # 允许 argparse 覆盖
+    cur = get_current_token()
+    if cur:
+        exp = _decode_jwt_exp(cur)
+        remain = exp - int(time.time()) if exp else None
+        log.info("当前 token 剩余 %s",
+                 f"{remain // 3600}h{(remain % 3600) // 60}m (exp={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))})" if remain else "(无法解析 exp)")
 
-    p = argparse.ArgumentParser(description="自动登录 agent.minimaxi.com")
-    p.add_argument("--check", action="store_true", help="只检查当前 token 是否过期")
-    p.add_argument("--force", action="store_true", help="强制重新登录")
-    p.add_argument("--phone", default=PHONE)
-    p.add_argument("--password", default=PASSWORD)
-    args = p.parse_args()
-
-    PHONE, PASSWORD = args.phone, args.password
-
-    current = get_current_token()
-    log.info("当前 token: %s", describe_token(current))
-
-    if args.check:
-        exp = decode_jwt_exp(current)
-        if exp and exp - int(time.time()) < EXPIRY_REFRESH_THRESHOLD:
-            log.warning("即将过期，建议重新登录")
-            return 1
-        return 0
-
-    exp = decode_jwt_exp(current) if current else None
-    if current and exp and exp - int(time.time()) > EXPIRY_REFRESH_THRESHOLD and not args.force:
-        log.info("Token 仍在有效期内（剩余 %ds），无需登录。--force 可强制刷新。",
-                 exp - int(time.time()))
-        return 0
-
-    with httpx.Client(
-        headers={k: v for k, v in COMMON_HEADERS.items() if k != "Content-Type"},
-        follow_redirects=True,
-        timeout=15.0,
-    ) as client:
-        try:
-            csrf = warm_up(client)
-        except Exception as e:
-            log.error("预热失败: %s", e)
-            return 3
-
-        token = try_login(client, csrf)
-        if not token:
-            log.error("=" * 60)
-            log.error("所有端点都未拿到 token。可能原因：")
-            log.error("  1. 端点不在 LOGIN_ENDPOINTS 列表里 → 在脚本顶部加新端点")
-            log.error("  2. 密码需要别的处理（RSA / 加盐 / 签名）→ 调整 PASSWORD_VARIANTS")
-            log.error("  3. 需要图形验证码 / 短信验证码 → 当前脚本不支持，请手动登录一次")
-            log.error("  4. 被风控拦截 → 换 IP / 降速 / 换 UA")
-            log.error("操作建议：打开 DevTools → Network，输入账号密码登录，")
-            log.error("把核心 POST 请求的 URL / Headers / Payload 抓出来贴给我。")
-            log.error("=" * 60)
-            return 4
-
-        exp = decode_jwt_exp(token)
-        if exp:
-            log.info("登录成功！Token 过期时间: %s (剩余 %ds)",
-                     time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp)),
-                     exp - int(time.time()))
+        # 反查真实账号
+        log.info("反查账号真实信息…")
+        acc = fetch_real_account(cur)
+        if isinstance(acc, dict) and acc.get("statusInfo", {}).get("code") == 0:
+            ui = (acc.get("data") or {}).get("userInfo") or {}
+            log.info("  账号姓名: %s", ui.get("name"))
+            log.info("  真实手机号: %s（你给的 %s）", ui.get("phone"), PHONE)
+            if ui.get("phone") and ui.get("phone") != PHONE:
+                log.warning("  ⚠ 真实手机号 ≠ 你给我的号。改脚本顶部 PHONE 后再跑。")
         else:
-            log.info("登录成功！Token: %s...", token[:32])
+            log.warning("  反查失败：%s", json.dumps(acc, ensure_ascii=False)[:200] if isinstance(acc, dict) else acc)
 
-        save_token_to_config(token)
-        log.info("完成。可以启动代理: python main.py")
+    log.info("")
+    log.info("=" * 60)
+    log.info("已知约束：")
+    log.info("  1. 服务端 /v1/api/user/login/phone 不支持 loginType=20 (PASSWORD)")
+    log.info("     任何密码都会返回 1200019 '服务端开小差了'")
+    log.info("  2. SMS 登录走 loginType=PHONE(=空)，但发码前要先解腾讯滑块")
+    log.info("  3. 自动续期 /v1/api/user/renewal POST 无 body 返回 400")
+    log.info("=" * 60)
+    log.info("")
+
+    # 让用户选择路径
+    print("请选择登录方式：")
+    print("  [1] 用手机/邮箱收 SMS 验证码（需要你手动收短信 + 输码）")
+    print("  [2] 走浏览器登录后导出 _token（最稳妥）")
+    print("  [3] 退出（保留当前 token）")
+    choice = input("输入 1/2/3（默认 2）: ").strip() or "2"
+
+    if choice == "3":
+        log.info("保留当前 token。")
         return 0
+
+    if choice == "1":
+        phone = input(f"要发短信的手机号（默认 {PHONE}）: ").strip() or PHONE
+        log.info("1) 发送短信验证码到 %s …", phone)
+        r = send_sms(phone)
+        info = r.get("statusInfo", {})
+        if info.get("code") not in (0, None):
+            log.error("发送失败。可能要先在浏览器里完成滑块 CAPTCHA。")
+            log.error("建议改走方式 2。")
+            return 1
+        code = input("输入收到的 6 位验证码: ").strip()
+        if not code:
+            log.error("验证码不能为空")
+            return 1
+        d = login_with_sms_code(phone, code)
+        info = d.get("statusInfo", {})
+        if info.get("code") != 0:
+            log.error("登录失败：%s", info.get("message"))
+            return 1
+        token = (d.get("data") or {}).get("token") or (d.get("data") or {}).get("data", {}).get("token")
+        if not token:
+            log.error("未拿到 token: %s", json.dumps(d, ensure_ascii=False)[:300])
+            return 1
+
+    else:  # choice == "2"
+        log.info("=" * 60)
+        log.info("方式 2：浏览器登录后导出 _token")
+        log.info("=" * 60)
+        log.info("步骤：")
+        log.info("  1. 浏览器打开 https://agent.minimaxi.com/ ，扫码/SMS/微信登录")
+        log.info("  2. F12 → Console 粘贴下面这行，回车：")
+        log.info("")
+        log.info("     copy(localStorage.getItem('_token'))")
+        log.info("")
+        log.info("  3. 回到这里，把 token 粘到下面")
+        log.info("=" * 60)
+        token = input("粘贴 JWT（按 Ctrl+V，回车确认）: ").strip().strip('"').strip("'")
+        if not token or token.count(".") != 2:
+            log.error("看起来不像 JWT（需要两个点）")
+            return 1
+
+    # 写回
+    exp = _decode_jwt_exp(token)
+    if exp:
+        log.info("新 token 剩余 %dh%dm",
+                 (exp - int(time.time())) // 3600,
+                 ((exp - int(time.time())) % 3600) // 60)
+    save_token(token)
+    log.info("完成。可以 python main.py 启动代理。")
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (KeyboardInterrupt, EOFError):
+        log.info("已取消。")
+        sys.exit(130)
