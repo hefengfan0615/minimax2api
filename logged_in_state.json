@@ -1,0 +1,282 @@
+{
+  "cookies": [
+    {
+      "name": "sensorsdata2015jssdkchannel",
+      "value": "%7B%22prop%22%3A%7B%22_sa_channel_landing_url%22%3A%22%22%7D%7D",
+      "domain": ".minimaxi.com",
+      "path": "/",
+      "expires": 1815086678.050918,
+      "size": 90,
+      "httpOnly": false,
+      "secure": false,
+      "session": false
+    },
+    {
+      "name": "sajssdk_2015_cross_new_user",
+      "value": "1",
+      "domain": ".minimaxi.com",
+      "path": "/",
+      "expires": 1780531199.0,
+      "size": 28,
+      "httpOnly": false,
+      "secure": false,
+      "session": false
+    },
+    {
+      "name": "_gc_usr_id_cs0_d0_sec0_part0",
+      "value": "e96c966d-709e-4969-9676-14f4d3674caf",
+      "domain": "agent.minimaxi.com",
+      "path": "/",
+      "expires": 1785710488.0,
+      "size": 64,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "MUID",
+      "value": "0EECF36518A569B21480E40819C2682F",
+      "domain": ".bing.com",
+      "path": "/",
+      "expires": 1814222490.402213,
+      "size": 36,
+      "httpOnly": false,
+      "secure": true,
+      "session": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "MR",
+      "value": "0",
+      "domain": ".bat.bing.com",
+      "path": "/",
+      "expires": 1781131290.402311,
+      "size": 3,
+      "httpOnly": false,
+      "secure": true,
+      "session": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_sid",
+      "value": "0756e547f5e1ac85697ac6f60cf98e8f",
+      "domain": "account.minimaxi.com",
+      "path": "/",
+      "expires": 1783982848.651033,
+      "size": 36,
+      "httpOnly": true,
+      "secure": true,
+      "session": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_oauth_state",
+      "value": "",
+      "domain": "agent.minimaxi.com",
+      "path": "/",
+      "expires": -1.0,
+      "size": 12,
+      "httpOnly": true,
+      "secure": true,
+      "session": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_token",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM5ODI4NDksInVzZXIiOnsiaWQiOiI1MTcxNDkyNTQxOTI1NjIxNzYiLCJuYW1lIjoi5o6i57Si6ICFMjE3NiIsImF2YXRhciI6Imh0dHBzOi8vY2RuLmhhaWx1b2FpLmNvbS9wcm9kLzIwMjUtMDMtMTItMjAvdXNlcl9hdmF0YXIvMTc0MTc4MTIwMDQ2NDM3NjUxNy0yMTExOTE4Nzk0ODY2Njg4MDFvdmVyc2l6ZS5wbmciLCJkZXZpY2VJRCI6IiIsImlzQW5vbnltb3VzIjpmYWxzZX19._VGBz_sYUuc6WnLPvslTphrtscrCDCwoxVPB8Hi2_DI",
+      "domain": "agent.minimaxi.com",
+      "path": "/",
+      "expires": 1783118849.450498,
+      "size": 391,
+      "httpOnly": false,
+      "secure": true,
+      "session": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "sensorsdata2015jssdkcross",
+      "value": "%7B%22distinct_id%22%3A%22E8MJAQOgO11L%22%2C%22first_id%22%3A%2219e8fa61cb920e-0fbf989de25c918-1e543b4d-480000-19e8fa61cba110d%22%2C%22props%22%3A%7B%22%24latest_traffic_source_type%22%3A%22%E7%9B%B4%E6%8E%A5%E6%B5%81%E9%87%8F%22%2C%22%24latest_search_keyword%22%3A%22%E6%9C%AA%E5%8F%96%E5%88%B0%E5%80%BC_%E7%9B%B4%E6%8E%A5%E6%89%93%E5%BC%80%22%2C%22%24latest_referrer%22%3A%22%22%7D%2C%22identities%22%3A%22eyIkaWRlbnRpdHlfY29va2llX2lkIjoiMTllOGZhNjFjYjkyMGUtMGZiZjk4OWRlMjVjOTE4LTFlNTQzYjRkLTQ4MDAwMC0xOWU4ZmE2MWNiYTExMGQiLCIkaWRlbnRpdHlfbG9naW5faWQiOiJFOE1KQVFPZ08xMUwifQ%3D%3D%22%2C%22history_login_id%22%3A%7B%22name%22%3A%22%24identity_login_id%22%2C%22value%22%3A%22E8MJAQOgO11L%22%7D%2C%22%24device_id%22%3A%2219e8fa61cb920e-0fbf989de25c918-1e543b4d-480000-19e8fa61cba110d%22%7D",
+      "domain": ".minimaxi.com",
+      "path": "/",
+      "expires": 1815086849.713247,
+      "size": 811,
+      "httpOnly": false,
+      "secure": false,
+      "session": false
+    },
+    {
+      "name": "_uetsid",
+      "value": "5c8b96f05f9d11f19058d3f7061b56ba",
+      "domain": ".minimaxi.com",
+      "path": "/",
+      "expires": 1780613399.0,
+      "size": 39,
+      "httpOnly": false,
+      "secure": false,
+      "session": false
+    },
+    {
+      "name": "_uetvid",
+      "value": "5c8bcc905f9d11f1970693b3228e7b32",
+      "domain": ".minimaxi.com",
+      "path": "/",
+      "expires": 1814222999.0,
+      "size": 39,
+      "httpOnly": false,
+      "secure": false,
+      "session": false
+    },
+    {
+      "name": "_gc_s_cs0_d0_sec0_part0",
+      "value": "rum=2&id=863b9388-47ae-4999-a587-68672868e25e&created=1780526488804&expire=1780527929345",
+      "domain": "agent.minimaxi.com",
+      "path": "/",
+      "expires": 1780527978.0,
+      "size": 111,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "sameSite": "Strict"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://agent.minimaxi.com",
+      "localStorage": [
+        {
+          "name": "theme",
+          "value": "light"
+        },
+        {
+          "name": "UPDATE_MODAL_INFO_KEY",
+          "value": "{\"bottom_btn_link_current_window\":true,\"bottom_btn_text\":\"开始体验\",\"bottom_btn_type\":\"link\",\"content\":\"<ul style=\\\"margin:0;padding-left:20px;list-style-type:disc;list-style-position:outside;font-size:16px;line-height:26px;color:var(--text_default_primary);\\\"><li><strong>全新M3模型：</strong>智能与速度全面进化，让你从容应对任何复杂任务。</li><li><strong>持续记忆：</strong>Agent 会记住你说过的每件事，随时接续你的奇思妙想。</li><li><strong>专属技能：</strong>在协作中自然沉淀经验，将重复流程变成你的专属技能。</li><li><strong>统一计费：</strong>全面打通 Token Plan，计费更统一，使用体验更顺畅。</li></ul>\",\"height\":450,\"show_on_mac\":true,\"show_on_windows\":true,\"side_pic_position\":\"right\",\"side_pic_url_dark\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/c86468f1-a267-4a93-9edf-388d1cf85976.png\",\"side_pic_url_h5_dark\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/8708aae5-6c90-4a0a-a755-00329651166f.png\",\"side_pic_url_h5_light\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/8708aae5-6c90-4a0a-a755-00329651166f.png\",\"side_pic_url_light\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/c86468f1-a267-4a93-9edf-388d1cf85976.png\",\"title\":\"MiniMax 网页版全新升级\",\"title_tags\":[\"更新\"],\"update_time\":1780279573723,\"width\":800,\"is_read\":true,\"modal_variant\":\"normal\"}"
+        },
+        {
+          "name": "mavis:model-selection",
+          "value": "{\"providerId\":\"minimax\",\"modelId\":\"MiniMax-M3\",\"variant\":\"thinking\"}"
+        },
+        {
+          "name": "_uetvid_exp",
+          "value": "Mon, 28 Jun 2027 22:49:59 GMT"
+        },
+        {
+          "name": "mavis_model_select_tooltip_dismissed",
+          "value": "true"
+        },
+        {
+          "name": "sawebjssdkchannel",
+          "value": "{\"latest_event_initial_time\":1780526488758,\"eventList\":[\"link_origin\",\"web_launch\",\"page_view\",\"banner_popup_view\",\"app_launch\",\"login_popup_view\",\"login_click\",\"page_duration\",\"session_create\",\"session_switch\",\"message_send\",\"chat_send\",\"message_response_start\",\"message_response_complete\"]}"
+        },
+        {
+          "name": "_uetsid",
+          "value": "5c8b96f05f9d11f19058d3f7061b56ba"
+        },
+        {
+          "name": "_token",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM5ODI4NDksInVzZXIiOnsiaWQiOiI1MTcxNDkyNTQxOTI1NjIxNzYiLCJuYW1lIjoi5o6i57Si6ICFMjE3NiIsImF2YXRhciI6Imh0dHBzOi8vY2RuLmhhaWx1b2FpLmNvbS9wcm9kLzIwMjUtMDMtMTItMjAvdXNlcl9hdmF0YXIvMTc0MTc4MTIwMDQ2NDM3NjUxNy0yMTExOTE4Nzk0ODY2Njg4MDFvdmVyc2l6ZS5wbmciLCJkZXZpY2VJRCI6IiIsImlzQW5vbnltb3VzIjpmYWxzZX19._VGBz_sYUuc6WnLPvslTphrtscrCDCwoxVPB8Hi2_DI"
+        },
+        {
+          "name": "mavis:drafts",
+          "value": "{}"
+        },
+        {
+          "name": "_uetsid_exp",
+          "value": "Thu, 04 Jun 2026 22:49:59 GMT"
+        },
+        {
+          "name": "_uetvid",
+          "value": "5c8bcc905f9d11f1970693b3228e7b32"
+        },
+        {
+          "name": "user_detail_agent",
+          "value": "{\"userID\":\"E8MJAQOgO11L\",\"realUserID\":\"517149254247088130\",\"userName\":\"MiniMax712099\",\"webAvatar\":\"https://cdn.hailuoai.com/prod/2026-03-30-17/user/multi_chat_file/5b8fe0a8-8fb4-4841-88e3-6ef6f487bb07.png\",\"subUserName\":\"\",\"subUserAvatar\":\"\",\"subUserSocialMediaUrl\":\"\",\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM5ODI4NDksInVzZXIiOnsiaWQiOiI1MTcxNDkyNTQxOTI1NjIxNzYiLCJuYW1lIjoi5o6i57Si6ICFMjE3NiIsImF2YXRhciI6Imh0dHBzOi8vY2RuLmhhaWx1b2FpLmNvbS9wcm9kLzIwMjUtMDMtMTItMjAvdXNlcl9hdmF0YXIvMTc0MTc4MTIwMDQ2NDM3NjUxNy0yMTExOTE4Nzk0ODY2Njg4MDFvdmVyc2l6ZS5wbmciLCJkZXZpY2VJRCI6IiIsImlzQW5vbnltb3VzIjpmYWxzZX19._VGBz_sYUuc6WnLPvslTphrtscrCDCwoxVPB8Hi2_DI\"}"
+        },
+        {
+          "name": "UNIQUE_USER_ID",
+          "value": "f1123847-7d11-41d1-8204-8afdcdd6ea64"
+        },
+        {
+          "name": "mavis:biz:firstLaunchSeen",
+          "value": "1"
+        }
+      ],
+      "sessionStorage": [
+        {
+          "name": "mavis:activeSessionId",
+          "value": "405396425946024"
+        },
+        {
+          "name": "mavis:activeAgentId",
+          "value": "403870624314008"
+        },
+        {
+          "name": "tab_device_id",
+          "value": "31711366"
+        }
+      ]
+    },
+    {
+      "origin": "https://agent.minimaxi.com",
+      "localStorage": [
+        {
+          "name": "_token",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM5ODI4NDksInVzZXIiOnsiaWQiOiI1MTcxNDkyNTQxOTI1NjIxNzYiLCJuYW1lIjoi5o6i57Si6ICFMjE3NiIsImF2YXRhciI6Imh0dHBzOi8vY2RuLmhhaWx1b2FpLmNvbS9wcm9kLzIwMjUtMDMtMTItMjAvdXNlcl9hdmF0YXIvMTc0MTc4MTIwMDQ2NDM3NjUxNy0yMTExOTE4Nzk0ODY2Njg4MDFvdmVyc2l6ZS5wbmciLCJkZXZpY2VJRCI6IiIsImlzQW5vbnltb3VzIjpmYWxzZX19._VGBz_sYUuc6WnLPvslTphrtscrCDCwoxVPB8Hi2_DI"
+        },
+        {
+          "name": "theme",
+          "value": "light"
+        },
+        {
+          "name": "UPDATE_MODAL_INFO_KEY",
+          "value": "{\"bottom_btn_link_current_window\":true,\"bottom_btn_text\":\"开始体验\",\"bottom_btn_type\":\"link\",\"content\":\"<ul style=\\\"margin:0;padding-left:20px;list-style-type:disc;list-style-position:outside;font-size:16px;line-height:26px;color:var(--text_default_primary);\\\"><li><strong>全新M3模型：</strong>智能与速度全面进化，让你从容应对任何复杂任务。</li><li><strong>持续记忆：</strong>Agent 会记住你说过的每件事，随时接续你的奇思妙想。</li><li><strong>专属技能：</strong>在协作中自然沉淀经验，将重复流程变成你的专属技能。</li><li><strong>统一计费：</strong>全面打通 Token Plan，计费更统一，使用体验更顺畅。</li></ul>\",\"height\":450,\"show_on_mac\":true,\"show_on_windows\":true,\"side_pic_position\":\"right\",\"side_pic_url_dark\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/c86468f1-a267-4a93-9edf-388d1cf85976.png\",\"side_pic_url_h5_dark\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/8708aae5-6c90-4a0a-a755-00329651166f.png\",\"side_pic_url_h5_light\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/8708aae5-6c90-4a0a-a755-00329651166f.png\",\"side_pic_url_light\":\"https://cdn.hailuoai.com/hailuo-video-web/public_assets/c86468f1-a267-4a93-9edf-388d1cf85976.png\",\"title\":\"MiniMax 网页版全新升级\",\"title_tags\":[\"更新\"],\"update_time\":1780279573723,\"width\":800,\"is_read\":true,\"modal_variant\":\"normal\"}"
+        },
+        {
+          "name": "mavis:model-selection",
+          "value": "{\"providerId\":\"minimax\",\"modelId\":\"MiniMax-M3\",\"variant\":\"thinking\"}"
+        },
+        {
+          "name": "mavis:drafts",
+          "value": "{}"
+        },
+        {
+          "name": "_uetvid_exp",
+          "value": "Mon, 28 Jun 2027 22:49:59 GMT"
+        },
+        {
+          "name": "_uetsid_exp",
+          "value": "Thu, 04 Jun 2026 22:49:59 GMT"
+        },
+        {
+          "name": "mavis_model_select_tooltip_dismissed",
+          "value": "true"
+        },
+        {
+          "name": "_uetvid",
+          "value": "5c8bcc905f9d11f1970693b3228e7b32"
+        },
+        {
+          "name": "sawebjssdkchannel",
+          "value": "{\"latest_event_initial_time\":1780526488758,\"eventList\":[\"link_origin\",\"web_launch\",\"page_view\",\"banner_popup_view\",\"app_launch\",\"login_popup_view\",\"login_click\",\"page_duration\",\"session_create\",\"session_switch\",\"message_send\",\"chat_send\",\"message_response_start\",\"message_response_complete\"]}"
+        },
+        {
+          "name": "user_detail_agent",
+          "value": "{\"userID\":\"E8MJAQOgO11L\",\"realUserID\":\"517149254247088130\",\"userName\":\"MiniMax712099\",\"webAvatar\":\"https://cdn.hailuoai.com/prod/2026-03-30-17/user/multi_chat_file/5b8fe0a8-8fb4-4841-88e3-6ef6f487bb07.png\",\"subUserName\":\"\",\"subUserAvatar\":\"\",\"subUserSocialMediaUrl\":\"\",\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM5ODI4NDksInVzZXIiOnsiaWQiOiI1MTcxNDkyNTQxOTI1NjIxNzYiLCJuYW1lIjoi5o6i57Si6ICFMjE3NiIsImF2YXRhciI6Imh0dHBzOi8vY2RuLmhhaWx1b2FpLmNvbS9wcm9kLzIwMjUtMDMtMTItMjAvdXNlcl9hdmF0YXIvMTc0MTc4MTIwMDQ2NDM3NjUxNy0yMTExOTE4Nzk0ODY2Njg4MDFvdmVyc2l6ZS5wbmciLCJkZXZpY2VJRCI6IiIsImlzQW5vbnltb3VzIjpmYWxzZX19._VGBz_sYUuc6WnLPvslTphrtscrCDCwoxVPB8Hi2_DI\"}"
+        },
+        {
+          "name": "_uetsid",
+          "value": "5c8b96f05f9d11f19058d3f7061b56ba"
+        },
+        {
+          "name": "UNIQUE_USER_ID",
+          "value": "f1123847-7d11-41d1-8204-8afdcdd6ea64"
+        },
+        {
+          "name": "mavis:biz:firstLaunchSeen",
+          "value": "1"
+        }
+      ],
+      "sessionStorage": []
+    }
+  ]
+}
