@@ -192,18 +192,21 @@ async def login_and_get_token(phone: str, password: str) -> Tuple[str, str, str]
 
 
 async def list_official_models(jwt: str, user_id: str) -> list:
-    """从官方 /archon/api/v1/agent 拉取模型列表"""
+    """从 /archon/api/v1/config 拉取官方模型列表"""
     async with httpx.AsyncClient(timeout=15) as c:
-        for path in ("/archon/api/v1/agent", "/archon/api/v1/config"):
-            try:
-                qs = build_qs(jwt, user_id)
-                r = await c.get(f"{AGENT}{path}?{qs}", headers=sign_headers(jwt, {}, path, qs))
-                r.raise_for_status()
-                bots = r.json().get("data", {}).get("agents") or []
-                if bots:
-                    return bots
-            except Exception:
-                continue
+        path = "/archon/api/v1/config"
+        qs = build_qs(jwt, user_id)
+        r = await c.get(f"{AGENT}{path}?{qs}", headers=sign_headers(jwt, {}, path, qs))
+        r.raise_for_status()
+        d = r.json()
+        # 真实结构：{"data": {"models": [...]}}
+        models = (
+            d.get("data", {}).get("models")
+            or d.get("data", {}).get("configs")
+            or d.get("models")
+            or []
+        )
+        return models
     return []
 
 
@@ -271,7 +274,10 @@ async def main():
     p = argparse.ArgumentParser()
     p.add_argument("--phone", required=True)
     p.add_argument("--password", required=True)
-    p.add_argument("--chat", required=True, help="要发送的消息")
+    p.add_argument("--chat", help="要发送的消息")
+    p.add_argument("--model", default="MiniMax-M3", help="模型名（默认 MiniMax-M3，可选 MiniMax-M2.7 / MiniMax-M2.7-highspeed）")
+    p.add_argument("--variant", default="thinking", help="thinking 或留空（仅 M3 支持切换）")
+    p.add_argument("--list-models", action="store_true", help="列出所有可用模型后退出")
     p.add_argument("--stream", action="store_true", help="流式输出")
     args = p.parse_args()
 
@@ -279,18 +285,32 @@ async def main():
     jwt, uid, dev = await login_and_get_token(args.phone, args.password)
 
     print(f"\n[2] 拉取官网模型...")
-    bots = await list_official_models(jwt, uid)
-    if bots:
-        for b in bots[:5]:
-            print(f"  - {b.get('id')} {b.get('name')}")
-        agent_id, model = bots[0]["id"], bots[0].get("name", "MiniMax-M3")
-    else:
-        # 官网接口空时使用内置默认
-        agent_id, model = "403870624314008", "MiniMax-M3"
-        print(f"  (空，使用内置默认)")
+    models = await list_official_models(jwt, uid)
+    print(f"  共 {len(models)} 个模型:")
+    for m in models:
+        provider = m.get("provider_id", "?")
+        mid = m.get("model_id", m.get("id", "?"))
+        name = m.get("display_name") or m.get("name") or mid
+        ctx = m.get("context_limit", "?")
+        variants = m.get("supported_variants") or ["-"]
+        tc = m.get("thinking_config", {}).get("mode", "-")
+        print(f"  - {mid:30s}  context={ctx:>7}  variants={variants}  thinking={tc}")
 
-    print(f"\n[3] 发送: {args.chat!r}")
-    reply = await chat(jwt, uid, dev, args.chat, agent_id, model, stream=args.stream)
+    if args.list_models:
+        return
+
+    if not args.chat:
+        print("\n需要 --chat 传消息，或者用 --list-models 仅看模型")
+        return
+
+    # 校验模型名
+    valid_ids = {m.get("model_id") for m in models}
+    if args.model not in valid_ids and models:
+        print(f"  ⚠️ '{args.model}' 不在官方模型中，回退到 {models[0]['model_id']}")
+        args.model = models[0]["model_id"]
+    print(f"\n[3] 发送: {args.chat!r}  (model={args.model}, variant={args.variant})")
+    reply = await chat(jwt, uid, dev, args.chat, "403870624314008",
+                       args.model, variant=args.variant, stream=args.stream)
     if not args.stream:
         print(f"\n[回复] {reply}")
 
