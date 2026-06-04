@@ -599,9 +599,10 @@ async def chat(
             r.raise_for_status()
             buffer = ""
             async for line in r.aiter_lines():
-                if not line.startswith("data: "):
+                # SSE 格式：data:{...}（无空格）— data: 后面直接是 { 或 [
+                if not line.startswith("data:") or len(line) <= 5 or line[5] not in "{[":
                     continue
-                payload = line[6:]
+                payload = line[5:].lstrip()
                 if payload == "[DONE]":
                     break
                 try:
@@ -610,12 +611,15 @@ async def chat(
                     continue
                 chunk = d.get("agent_message_chunk") or d.get("agent_message") or {}
                 c = chunk.get("msg_content") or ""
-                t = chunk.get("thinking_content") or ""
                 if c and c != buffer:
                     sys.stdout.write(c[len(buffer):])
                     sys.stdout.flush()
                     buffer = c
             sys.stdout.write("\n")
+            sys.stdout.flush()
+            # 等一拍确保管道/终端有足够时间读取
+            import asyncio as _aio
+            await _aio.sleep(0.05)
             return buffer
     else:
         r = await client.post(url, json=body, headers=headers, timeout=60)
