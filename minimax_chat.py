@@ -95,7 +95,11 @@ def parse_jwt(jwt: str) -> dict:
 
 
 def parse_sse(sse: str) -> Tuple[str, str]:
-    """解析 SSE 响应，返回 (msg_content, thinking_content)"""
+    """解析 SSE 响应，返回 (msg_content, thinking_content)
+
+    关键：type=2 final 才是完整内容，type=6 chunks 不累积（要拿 max）。
+    要跳过 user echo（role=user 的 type=2）。
+    """
     content, thinking = "", ""
     for line in sse.split("\n"):
         line = line.strip()
@@ -109,19 +113,26 @@ def parse_sse(sse: str) -> Tuple[str, str]:
             d = json.loads(payload)
         except Exception:
             continue
-        chunk = d.get("agent_message_chunk") or {}
-        if chunk:
-            if chunk.get("msg_content"):
-                content = chunk["msg_content"]
-            if chunk.get("thinking_content"):
-                thinking = chunk["thinking_content"]
-            continue
+        # type=2 完整消息（assistant 才是答案，跳过 user echo）
         msg = d.get("agent_message") or {}
-        if msg:
-            if msg.get("msg_content") and not content:
-                content = msg["msg_content"]
-            if msg.get("thinking_content") and not thinking:
-                thinking = msg["thinking_content"]
+        if msg and msg.get("role") == "assistant":
+            c = msg.get("msg_content") or ""
+            t = msg.get("thinking_content") or ""
+            # final 的 type=2 是最完整的；如果之前 chunks 拿到部分内容，这里覆盖
+            if c and len(c) >= len(content):
+                content = c
+            if t and len(t) >= len(thinking):
+                thinking = t
+            continue
+        # type=6 chunks：取 max（chunks 顺序累积，所以 max = 最新 = 最完整）
+        chunk = d.get("agent_message_chunk") or {}
+        if chunk and chunk.get("role") == "assistant":
+            c = chunk.get("msg_content") or ""
+            t = chunk.get("thinking_content") or ""
+            if c and len(c) > len(content):
+                content = c
+            if t and len(t) > len(thinking):
+                thinking = t
     return content, thinking
 
 
