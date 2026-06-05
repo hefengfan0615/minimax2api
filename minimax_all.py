@@ -41,7 +41,6 @@ ACCOUNT_URL = "https://account.minimaxi.com"
 STREAM_URL  = "https://agent-stream.minimaxi.com"
 CLIENT_ID   = "agent-minimax"
 SIG_SALT    = "I*7Cf%WZ#S&%1RlZJ&C2"
-DEFAULT_AGENT_ID = "403870624314008"  # M3 默认
 
 # v0.1.10 RSA-1024 公钥（account.minimaxi.com 的 chunk 210）
 RSA_PUB_PEM = """-----BEGIN PUBLIC KEY-----
@@ -181,7 +180,7 @@ async def login(client: httpx.AsyncClient, phone: str, password: str
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ② 拉取官网模型列表
+# ② 拉取官网模型列表 + 默认 agent
 # ═══════════════════════════════════════════════════════════════════════════
 async def fetch_models(client: httpx.AsyncClient, jwt: str, uid: str,
                        dev: str) -> List[dict]:
@@ -196,6 +195,26 @@ async def fetch_models(client: httpx.AsyncClient, jwt: str, uid: str,
     if "models" in d:
         return d["models"]
     return []
+
+
+async def fetch_agents(client, jwt, uid, dev) -> List[dict]:
+    """拉取 agent 列表（含内置 mavis/general/coder/verifier/chat 等）"""
+    p = "/archon/api/v1/agent"
+    qs = build_qs(jwt, uid, dev)
+    r = await client.get(f"{AGENT_URL}{p}?{qs}",
+                         headers=sign_headers(jwt, {}, p, qs))
+    r.raise_for_status()
+    return r.json().get("agents", [])
+
+
+def pick_default_agent(agents: List[dict]) -> dict:
+    """选默认 agent：优先 mavis（团队 Leader），否则第一个"""
+    for a in agents:
+        if a.get("agent_role") == "mavis":
+            return a
+    if agents:
+        return agents[0]
+    raise RuntimeError("可用 agent 列表为空")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -282,32 +301,41 @@ async def delete_session(client, jwt, uid, dev, session_id: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 # 高层：一站式 ask（登录→（列模型）→ 聊天 → 删）
 # ═══════════════════════════════════════════════════════════════════════════
-async def ask(phone, password, message, model="MiniMax-M3",
+async def ask(phone, password, message, model=None,
               variant="thinking", stream=False, list_models=False) -> dict:
     """一站式：登录→（列模型）→ 聊天 → 删 session"""
     client = httpx.AsyncClient(follow_redirects=False, timeout=120)
     result = {"ok": False, "session_id": None, "reply": "", "thinking": ""}
     try:
         # ① 登录
-        print(f"\n[1/4] 登录")
+        print(f"\n[1/5] 登录")
         jwt, uid, dev = await login(client, phone, password)
 
-        # ② 拉模型
-        print(f"\n[2/4] 拉取模型")
+        # ② 拉模型 + agent
+        print(f"\n[2/5] 拉取模型 / agent")
         models = await fetch_models(client, jwt, uid, dev)
-        print(f"  共 {len(models)} 个：")
+        print(f"  模型 {len(models)} 个：")
         for m in models:
             print(f"    - {m.get('model_id'):30s} ctx={m.get('context_limit','?')}")
+
+        agents = await fetch_agents(client, jwt, uid, dev)
+        agent = pick_default_agent(agents)
+        print(f"  agent {len(agents)} 个，默认：{agent['display_name']} "
+              f"({agent['agent_role']}, id={agent['name']})")
         if list_models:
             result["models"] = models
+            result["agents"] = agents
             return result
-        if model not in {m["model_id"] for m in models} and models:
+        if model is None:
+            model = models[0]["model_id"] if models else None
+        elif model not in {m["model_id"] for m in models} and models:
             model = models[0]["model_id"]
 
         # ③ 聊天
-        print(f"\n[3/4] 聊天  model={model}  stream={stream}")
+        print(f"\n[3/5] 聊天  model={model}  agent={agent['display_name']}  "
+              f"stream={stream}")
         sid, content, thinking = await chat_once(
-            client, jwt, uid, dev, DEFAULT_AGENT_ID, model, message,
+            client, jwt, uid, dev, agent["name"], model, message,
             variant=variant, stream=stream,
         )
         result["session_id"] = sid
@@ -321,7 +349,7 @@ async def ask(phone, password, message, model="MiniMax-M3",
             print(f"\n  [回复] {content}")
 
         # ④ 删 session
-        print(f"\n[4/4] 清理 session {sid}")
+        print(f"\n[4/5] 清理 session {sid}")
         ok = await delete_session(client, jwt, uid, dev, sid)
         print(f"  [cleanup] {'✓ 已删除' if ok else '✗ 删除失败'}")
         result["deleted"] = ok
@@ -335,10 +363,10 @@ async def ask(phone, password, message, model="MiniMax-M3",
 # ═══════════════════════════════════════════════════════════════════════════
 async def test_all(phone, password):
     print("=" * 70)
-    print("MiniMax 全功能测试（一站式：登录→模型→聊天→删除）")
+    print("MiniMax 全功能测试（一站式：登录→模型/agent→聊天→删除）")
     print("=" * 70)
 
-    # Test A: 非流式
+    # Test A: 非流式（自动选模型 + agent）
     print(f"\n--- 测试 A: 非流式聊天 ---")
     r = await ask(phone, password, "用一句话介绍你自己")
     assert r["ok"] and r["deleted"], f"A 失败: {r}"
@@ -348,9 +376,10 @@ async def test_all(phone, password):
     r = await ask(phone, password, "1+1=?  只回答数字", stream=True)
     assert r["ok"] and r["deleted"], f"B 失败: {r}"
 
-    # Test C: 不同模型（不传 --model，自动用第一个）
-    print(f"\n--- 测试 C: 不传模型参数（自动选第一个） ---")
-    r = await ask(phone, password, "用一句话介绍你自己", model=None)
+    # Test C: 指定模型（agent 仍自动选）
+    print(f"\n--- 测试 C: 指定模型（agent 仍自动选） ---")
+    r = await ask(phone, password, "用一句话介绍你自己",
+                  model="MiniMax-M2.7")
     assert r["ok"] and r["deleted"], f"C 失败: {r}"
 
     print(f"\n{'=' * 70}\n所有测试通过 ✓\n{'=' * 70}")
