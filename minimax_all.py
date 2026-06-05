@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MiniMax 一站式：登录 → 拉模型 → 上传文件（可选/单/多） → 聊天 → 删除会话
+"""MiniMax 一站式：登录 → 拉模型 → 聊天 → 删除会话
 
 用法：
-    # 单条消息 + 不上传文件
+    # 单条消息
     python3 minimax_all.py --phone 19065353709 --password baobao615 \
         --chat "今天有什么科技新闻？"
 
-    # 多文件上传 + 让 AI 总结
-    python3 minimax_all.py --phone 19065353709 --password baobao615 \
-        --chat "总结这俩文件" --file a.txt --file b.md
-
-    # 多轮对话（每轮都自动删 session）
-    python3 minimax_all.py --phone 19065353709 --password baobao615 \
-        --multi --chat "1+1" --chat "2+2"
+    # 多轮对话（每轮独立 session + 自动删除）
+    python3 minimax_all.py --phone 19065353709 --password baobao615 --multi \
+        --chat "你好" --chat "1+1" --chat "再见"
 
     # 列出模型
     python3 minimax_all.py --phone 19065353709 --password baobao615 --list-models
@@ -27,13 +23,11 @@ import asyncio
 import base64
 import hashlib
 import json
-import mimetypes
-import os
 import random
 import re
 import time
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -205,66 +199,7 @@ async def fetch_models(client: httpx.AsyncClient, jwt: str, uid: str,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ③ 文件上传（OSS 直传，浏览器抓包 reverse-engineered）
-#   request_policy → PUT to OSS → policy_callback
-# ═══════════════════════════════════════════════════════════════════════════
-async def upload_file(client: httpx.AsyncClient, jwt: str, uid: str,
-                      dev: str, file_path: str) -> dict:
-    file_name = os.path.basename(file_path)
-    mime = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
-    with open(file_path, "rb") as f:
-        content = f.read()
-
-    # ① 拿 STS
-    p1 = "/v1/api/files/request_policy"
-    qs1 = build_qs(jwt, uid, dev)
-    r = await client.get(f"{AGENT_URL}{p1}?{qs1}",
-                         headers=sign_headers(jwt, {}, p1, qs1), timeout=15)
-    r.raise_for_status()
-    d = r.json()["data"]
-
-    # ② PUT 到 OSS
-    object_name = f"{uuid.uuid4()}{os.path.splitext(file_name)[1]}"
-    oss_key = f"{d['dir']}/{object_name}"
-    import oss2
-    auth = oss2.StsAuth(d["accessKeyId"], d["accessKeySecret"], d["securityToken"])
-    bucket = oss2.Bucket(auth, f"https://{d['endpoint']}", d["bucketName"])
-    bucket.put_object(oss_key, content, headers={
-        "Content-Disposition": f"attachment;filename={file_name};",
-        "Content-Type": mime,
-    })
-    file_md5 = hashlib.md5(content).hexdigest()
-
-    # ③ callback 拿 fileID
-    p3 = "/v1/api/files/policy_callback"
-    qs3 = build_qs(jwt, uid, dev)
-    cb_body = {
-        "fileName": object_name, "originFileName": file_name,
-        "dir": d["dir"], "endpoint": d["endpoint"],
-        "bucketName": d["bucketName"], "size": str(len(content)),
-        "mimeType": mime, "fileMd5": file_md5,
-    }
-    r = await client.post(f"{AGENT_URL}{p3}?{qs3}", json=cb_body,
-                          headers=sign_headers(jwt, cb_body, p3, qs3), timeout=15)
-    r.raise_for_status()
-    cb = r.json()
-    return {**cb.get("data", {}), "name": file_name, "size": len(content),
-            "md5": file_md5, "mime": mime}
-
-
-async def upload_files(client, jwt, uid, dev, paths: List[str]) -> List[dict]:
-    """批量上传"""
-    out = []
-    for p in paths:
-        meta = await upload_file(client, jwt, uid, dev, p)
-        print(f"  [upload] ✓ {meta['name']:20s} -> fileID={meta.get('fileID')} "
-              f"({meta['size']}B)")
-        out.append(meta)
-    return out
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ④ 建会话 / 发消息 / 流式 / 收回答
+# ③ 建会话 / 发消息 / 流式 / 收回答
 # ═══════════════════════════════════════════════════════════════════════════
 async def new_session(client, jwt, uid, dev, agent_id, model) -> str:
     p = f"/archon/api/v1/agent/{agent_id}/session"
@@ -278,7 +213,6 @@ async def new_session(client, jwt, uid, dev, agent_id, model) -> str:
 
 
 async def chat_once(client, jwt, uid, dev, agent_id, model, message: str,
-                    file_ids: Optional[List[str]] = None,
                     variant: str = "thinking",
                     stream: bool = False) -> Tuple[str, str, str]:
     """返回 (session_id, content, thinking)"""
@@ -292,8 +226,6 @@ async def chat_once(client, jwt, uid, dev, agent_id, model, message: str,
         "turn_id": str(uuid.uuid4()),
         "enable_team": True, "worktreeMode": False,
     }
-    if file_ids:
-        body["file_ids"] = [int(fid) for fid in file_ids]
     headers = sign_headers(jwt, body, p, qs)
     headers["Accept"] = "text/event-stream"
 
@@ -332,7 +264,7 @@ async def chat_once(client, jwt, uid, dev, agent_id, model, message: str,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ⑤ 删除会话（auto-cleanup）
+# ④ 删除会话（auto-cleanup）
 # ═══════════════════════════════════════════════════════════════════════════
 async def delete_session(client, jwt, uid, dev, session_id: str) -> bool:
     p = f"/archon/api/v1/session/{session_id}"
@@ -341,29 +273,27 @@ async def delete_session(client, jwt, uid, dev, session_id: str) -> bool:
                              headers=sign_headers(jwt, {}, p, qs), timeout=15)
     if r.status_code == 200:
         j = r.json()
-        ok = (j.get("success") is True
-              or j.get("base_resp", {}).get("status_code") == 0
-              or j.get("code") == 0)
-        return ok
+        return (j.get("success") is True
+                or j.get("base_resp", {}).get("status_code") == 0
+                or j.get("code") == 0)
     return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 高层：一站式 ask（登录→上传→聊天→删）
+# 高层：一站式 ask（登录→（列模型）→ 聊天 → 删）
 # ═══════════════════════════════════════════════════════════════════════════
-async def ask(phone, password, message, files=None, model="MiniMax-M3",
+async def ask(phone, password, message, model="MiniMax-M3",
               variant="thinking", stream=False, list_models=False) -> dict:
-    """一站式：登录→（列模型）→（上传）→ 聊天 → 删 session"""
+    """一站式：登录→（列模型）→ 聊天 → 删 session"""
     client = httpx.AsyncClient(follow_redirects=False, timeout=120)
-    result = {"ok": False, "session_id": None, "reply": "", "thinking": "",
-              "files_uploaded": []}
+    result = {"ok": False, "session_id": None, "reply": "", "thinking": ""}
     try:
         # ① 登录
-        print(f"\n[1/5] 登录")
+        print(f"\n[1/4] 登录")
         jwt, uid, dev = await login(client, phone, password)
 
         # ② 拉模型
-        print(f"\n[2/5] 拉取模型")
+        print(f"\n[2/4] 拉取模型")
         models = await fetch_models(client, jwt, uid, dev)
         print(f"  共 {len(models)} 个：")
         for m in models:
@@ -374,24 +304,11 @@ async def ask(phone, password, message, files=None, model="MiniMax-M3",
         if model not in {m["model_id"] for m in models} and models:
             model = models[0]["model_id"]
 
-        # ③ 上传文件（可选）
-        file_ids = []
-        if files:
-            print(f"\n[3/5] 上传 {len(files)} 个文件")
-            metas = await upload_files(client, jwt, uid, dev, files)
-            file_ids = [str(m["fileID"]) for m in metas
-                        if str(m.get("fileID", "")).isdigit()]
-            result["files_uploaded"] = [{"name": m["name"],
-                                          "fileID": m.get("fileID"),
-                                          "size": m["size"]} for m in metas]
-        else:
-            print(f"\n[3/5] 跳过上传（无文件）")
-
-        # ④ 聊天（自动建 session）
-        print(f"\n[4/5] 聊天  model={model}  stream={stream}")
+        # ③ 聊天
+        print(f"\n[3/4] 聊天  model={model}  stream={stream}")
         sid, content, thinking = await chat_once(
             client, jwt, uid, dev, DEFAULT_AGENT_ID, model, message,
-            file_ids=file_ids, variant=variant, stream=stream,
+            variant=variant, stream=stream,
         )
         result["session_id"] = sid
         result["reply"] = content
@@ -403,8 +320,8 @@ async def ask(phone, password, message, files=None, model="MiniMax-M3",
                 print(f"\n  [thinking] {thinking[:500]}")
             print(f"\n  [回复] {content}")
 
-        # ⑤ 删 session
-        print(f"\n[5/5] 清理 session {sid}")
+        # ④ 删 session
+        print(f"\n[4/4] 清理 session {sid}")
         ok = await delete_session(client, jwt, uid, dev, sid)
         print(f"  [cleanup] {'✓ 已删除' if ok else '✗ 删除失败'}")
         result["deleted"] = ok
@@ -418,34 +335,23 @@ async def ask(phone, password, message, files=None, model="MiniMax-M3",
 # ═══════════════════════════════════════════════════════════════════════════
 async def test_all(phone, password):
     print("=" * 70)
-    print("MiniMax 全功能测试（一站式：登录→模型→上传→聊天→删除）")
+    print("MiniMax 全功能测试（一站式：登录→模型→聊天→删除）")
     print("=" * 70)
 
-    # Test A: 不上传文件
-    print(f"\n--- 测试 A: 不上传文件 ---")
+    # Test A: 非流式
+    print(f"\n--- 测试 A: 非流式聊天 ---")
     r = await ask(phone, password, "用一句话介绍你自己")
     assert r["ok"] and r["deleted"], f"A 失败: {r}"
 
-    # Test B: 单个文件
-    with open("/tmp/test_a.txt", "w") as f:
-        f.write("This is a test document for AI summarization. It talks about cats.\n")
-    print(f"\n--- 测试 B: 单文件上传 ---")
-    r = await ask(phone, password, "用一句话总结这个文件的核心内容",
-                  files=["/tmp/test_a.txt"])
-    assert r["ok"] and r["deleted"] and len(r["files_uploaded"]) == 1, f"B 失败: {r}"
-
-    # Test C: 多文件
-    with open("/tmp/test_b.md", "w") as f:
-        f.write("# MiniMax\nMiniMax is an AI company.\n")
-    print(f"\n--- 测试 C: 多文件上传 ---")
-    r = await ask(phone, password, "对比这两个文件的主题",
-                  files=["/tmp/test_a.txt", "/tmp/test_b.md"])
-    assert r["ok"] and r["deleted"] and len(r["files_uploaded"]) == 2, f"C 失败: {r}"
-
-    # Test D: 流式
-    print(f"\n--- 测试 D: 流式聊天 ---")
+    # Test B: 流式
+    print(f"\n--- 测试 B: 流式聊天 ---")
     r = await ask(phone, password, "1+1=?  只回答数字", stream=True)
-    assert r["ok"] and r["deleted"], f"D 失败: {r}"
+    assert r["ok"] and r["deleted"], f"B 失败: {r}"
+
+    # Test C: 不同模型
+    print(f"\n--- 测试 C: 切换到 M2.7 ---")
+    r = await ask(phone, password, "用一句话介绍你自己", model="MiniMax-M2.7")
+    assert r["ok"] and r["deleted"], f"C 失败: {r}"
 
     print(f"\n{'=' * 70}\n所有测试通过 ✓\n{'=' * 70}")
 
@@ -458,7 +364,6 @@ async def main():
     p.add_argument("--phone", required=True)
     p.add_argument("--password", required=True)
     p.add_argument("--chat", action="append", help="消息（可多次）")
-    p.add_argument("--file", action="append", help="上传文件（可多次）")
     p.add_argument("--model", default="MiniMax-M3")
     p.add_argument("--variant", default="thinking")
     p.add_argument("--stream", action="store_true")
@@ -476,18 +381,16 @@ async def main():
         p.error("需要 --chat 传消息（可用 --test-all 跑全部）")
 
     if args.multi and len(args.chat) > 1:
-        # 多轮：每轮独立 session + 独立删除
         for i, msg in enumerate(args.chat, 1):
             print(f"\n>>> 第 {i}/{len(args.chat)} 轮")
             await ask(args.phone, args.password, msg,
-                      files=args.file, model=args.model,
-                      variant=args.variant, stream=args.stream,
+                      model=args.model, variant=args.variant,
+                      stream=args.stream,
                       list_models=(i == 1 and args.list_models))
     else:
         await ask(args.phone, args.password, args.chat[-1],
-                  files=args.file, model=args.model,
-                  variant=args.variant, stream=args.stream,
-                  list_models=args.list_models)
+                  model=args.model, variant=args.variant,
+                  stream=args.stream, list_models=args.list_models)
 
 
 if __name__ == "__main__":
