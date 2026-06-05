@@ -348,9 +348,9 @@ async def test_all(phone, password):
     r = await ask(phone, password, "1+1=?  只回答数字", stream=True)
     assert r["ok"] and r["deleted"], f"B 失败: {r}"
 
-    # Test C: 不同模型
-    print(f"\n--- 测试 C: 切换到 M2.7 ---")
-    r = await ask(phone, password, "用一句话介绍你自己", model="MiniMax-M2.7")
+    # Test C: 不同模型（不传 --model，自动用第一个）
+    print(f"\n--- 测试 C: 不传模型参数（自动选第一个） ---")
+    r = await ask(phone, password, "用一句话介绍你自己", model=None)
     assert r["ok"] and r["deleted"], f"C 失败: {r}"
 
     print(f"\n{'=' * 70}\n所有测试通过 ✓\n{'=' * 70}")
@@ -364,7 +364,8 @@ async def main():
     p.add_argument("--phone", required=True)
     p.add_argument("--password", required=True)
     p.add_argument("--chat", action="append", help="消息（可多次）")
-    p.add_argument("--model", default="MiniMax-M3")
+    p.add_argument("--model", default=None,
+                   help="模型名（不传则自动用第一个可用模型）")
     p.add_argument("--variant", default="thinking")
     p.add_argument("--stream", action="store_true")
     p.add_argument("--list-models", action="store_true")
